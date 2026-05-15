@@ -1,4 +1,4 @@
-# === GitHub 公开版：不含任何 API Key ===
+# === 本地文件（不提交到 GitHub）===
 *.pyc
 __pycache__/
 *.html
