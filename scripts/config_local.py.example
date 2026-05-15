@@ -1,0 +1,18 @@
+# ===================== 本地配置（请复制为 config_local.py）=====================
+# 此文件不会被提交到 GitHub，请填写你自己的 API Key
+# 复制命令: cp config_local.py.example config_local.py
+
+# marketdata.app - 免费注册获取 API Key
+# https://api.marketdata.app/register
+MARKETDATA_API_KEY = ""
+
+# Twelve Data - 免费 API Key（有限制）
+# https://twelvedata.com/apikey
+TWELVEDATA_API_KEY = ""
+
+# Yahoo Finance - 无需 Key，但频繁限流（建议配合代理）
+YAHOO_PROXY = ""
+
+# 备用：自定义代理（格式: http://user:pass@host:port）
+PROXY = ""
+# ============================================================================

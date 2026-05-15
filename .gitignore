@@ -1,0 +1,7 @@
+# === GitHub 公开版：不含任何 API Key ===
+*.pyc
+__pycache__/
+*.html
+.DS_Store
+config_local.py
+.env

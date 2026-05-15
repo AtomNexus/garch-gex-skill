@@ -18,10 +18,47 @@ category: finance
 - 正 GEX → 机构做多 Gamma（压制波动）；负 GEX → 机构做空 Gamma（助涨波动）
 - Gamma 翻转位：GEX 符号由正转负（或反之）的行权价，是重要的动态支撑/阻力位
 
-## 数据来源
+## 数据来源（多源自动切换）
 
-- API: `https://api.marketdata.app/v1/options/chains/{SYMBOL}`
-- 无需 API Key（公共接口）
+| 优先级 | 来源 | 说明 |
+|--------|------|------|
+| 1 | marketdata.app | 免费注册，需 API Key，详见本地配置 |
+| 2 | Yahoo Finance | 无需 Key，频繁限流 |
+| 3 | 合成演示数据 | 完全离线，明确标注 `[DEMO DATA]` |
+
+## 安装
+
+```bash
+git clone https://github.com/AtomNexus/garch-gex-skill.git
+cd garch-gex-skill/scripts
+
+# 首次配置 API Key（可选，不配置则使用演示数据）
+cp config_local.py.example config_local.py
+# 编辑 config_local.py，填入你的 API Key
+```
+
+## 使用方式
+
+```bash
+cd garch-gex-skill/scripts
+pip install -q requests pandas numpy schedule
+
+# 手动运行
+python gex_analysis.py
+
+# 定时任务（推荐通过 cronjob 工具配置）
+```
+
+## 重要：API Key 配置
+
+**API Key 不会提交到 GitHub**，通过 `config_local.py` 本地管理：
+
+```python
+# config_local.py.example（公开模板）
+MARKETDATA_API_KEY = ""      # marketdata.app 免费 Key
+TWELVEDATA_API_KEY = ""     # Twelve Data（可选）
+PROXY = ""                  # 代理（可选）
+```
 
 ## 输出文件
 
@@ -31,54 +68,6 @@ category: finance
 | `SPY_GEX_Report.html` | SPY 标普 500 ETF GEX 详细报告 |
 | `QQQ_GEX_Report.html` | QQQ 纳斯达克 100 ETF GEX 详细报告 |
 | `GARCH_QUANT_GEX_Overview.html` | 三合一总览页面 |
-
-## 使用方式
-
-### 1. 手动一次性运行
-
-```bash
-python ~/.hermes/skills/garch-gex-skill/scripts/gex_analysis.py
-```
-
-### 2. 定时任务（cron）
-
-推荐通过 cronjob 工具定时执行，例如每 30 分钟一次：
-
-```
-技能: garch-gex-skill
-定时: every 30m
-```
-
-或通过 cronjob action='create' 完整创建：
-
-```bash
-# 首次运行后，定时任务自动按 schedule 执行
-```
-
-### 3. 作为模块导入
-
-```python
-from scripts.gex_analysis import GEXAnalysisSkill, run_all_symbols_task
-
-# 单标的分析
-skill = GEXAnalysisSkill("SPX")
-chain_df = skill.get_option_chain()
-gex_df, flip_strikes, total_net_gex = skill.calc_gex(chain_df)
-html = skill.generate_brand_html(gex_df, flip_strikes, total_net_gex)
-```
-
-## 配置项（gex_analysis.py 顶部）
-
-```python
-SYMBOLS = ["SPX", "SPY", "QQQ"]      # 监测标的
-CONTRACT_MULTIPLIER = 100           # 合约乘数
-BASE_URL = "https://api.marketdata.app/v1/options/chains"
-SAVE_DIR = "./"                     # 报告保存目录
-RUN_INTERVAL_MIN = 30               # 定时运行间隔（分钟）
-BRAND_NAME = "GARCH QUANT"
-BRAND_STYLE_COLOR = "#002b5c"       # 深海军蓝
-BRAND_ACCENT_COLOR = "#d4af37"      # 哑光金
-```
 
 ## 报告解读
 
@@ -93,10 +82,13 @@ BRAND_ACCENT_COLOR = "#d4af37"      # 哑光金
 
 ## 已知限制
 
-- 该 API 为公共接口，有频率限制，高频调用可能返回 429
+- marketdata.app 免费层有频率限制，高频调用可能返回 429
+- Yahoo Finance 无需 Key 但经常限流（建议配合代理）
 - 不支持夜盘/期货期权的 GEX 计算
 - GEX 指标仅反映期权市场的 Gamma 暴露，不构成投资建议
 
-## 修复记录
+## 版本历史
 
-- v1.1：修复原始代码 9 处 HTML 标签残缺、`__name__` 下划线缺失、`flip_strikes` 未转义等问题
+- **v1.3**：API Key 分离到 `config_local.py`（不提交 GitHub），增加 `.gitignore`
+- **v1.2**：多源兜底（marketdata → Yahoo → 合成数据），合成数据明确标注
+- **v1.1**：修复原始代码 9 处 HTML 语法错误

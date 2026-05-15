@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-GARCH QUANT 期权 GEX 分析引擎 v1.2
+GARCH QUANT 期权 GEX 分析引擎 v1.3
 支持标的: SPX, SPY, QQQ
 多源兜底: marketdata.app → Yahoo Finance → 合成演示数据
+API Key 通过 config_local.py 本地配置（不提交到 GitHub）
 """
 
 import requests
@@ -16,6 +17,7 @@ except ImportError:
     time = None
 import html
 import random
+import os
 from datetime import datetime, timedelta
 
 # ===================== 核心配置区 =====================
@@ -33,6 +35,20 @@ BRAND_ACCENT_COLOR = "#d4af37"
 # 标的价格参考（用于生成合理的合成数据）
 REF_PRICES = {"SPX": 5900, "SPY": 590, "QQQ": 2050}
 
+# ---- 本地配置（允许为空，使用合成数据兜底）----
+try:
+    from config_local import (
+        MARKETDATA_API_KEY,
+        TWELVEDATA_API_KEY,
+        YAHOO_PROXY,
+        PROXY,
+    )
+except ImportError:
+    MARKETDATA_API_KEY = os.environ.get("MARKETDATA_API_KEY", "")
+    TWELVEDATA_API_KEY = os.environ.get("TWELVEDATA_API_KEY", "")
+    YAHOO_PROXY = os.environ.get("YAHOO_PROXY", "")
+    PROXY = os.environ.get("PROXY", "")
+
 
 class GEXAnalysisSkill:
     """期权 GEX 分析 — 多源爬取 + 计算 + HTML 报告"""
@@ -46,18 +62,27 @@ class GEXAnalysisSkill:
     # ---- 数据获取（多源兜底） ----
 
     def _fetch_marketdata(self):
-        """Source 1: marketdata.app"""
+        """Source 1: marketdata.app（需要 API Key，免费注册）"""
+        if not MARKETDATA_API_KEY:
+            print("  [marketdata] 无 API Key，跳过")
+            return None
         url = f"{MARKETDATA_URL}/{self.symbol}"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Authorization": f"Bearer {MARKETDATA_API_KEY}"
+        }
         try:
             res = requests.get(url, headers=headers, timeout=15)
             if res.status_code != 200:
+                print(f"  [marketdata] HTTP {res.status_code}")
                 return None
             data = res.json()
             if data.get("s") != "ok" or "strike" not in data:
+                print(f"  [marketdata] s={data.get('s')}")
                 return None
             return self._normalize_marketdata(data)
-        except Exception:
+        except Exception as e:
+            print(f"  [marketdata] 异常: {e}")
             return None
 
     def _normalize_marketdata(self, data):
@@ -70,25 +95,32 @@ class GEXAnalysisSkill:
         for i in range(len(strikes)):
             rows.append({
                 "行权价": strikes[i],
-                "期权类型": opt_types[i].upper() if isinstance(opt_types[i], str) else ("C" if opt_types[i] == 1 else "P"),
+                "期权类型": opt_types[i].upper() if isinstance(opt_types[i], str)
+                           else ("C" if opt_types[i] == 1 else "P"),
                 "Gamma值": float(gammas[i]) if gammas[i] is not None else 0.0,
                 "持仓量": int(ois[i]) if ois[i] is not None else 0
             })
         return pd.DataFrame(rows)
 
     def _fetch_yahoo(self):
-        """Source 2: Yahoo Finance options API"""
+        """Source 2: Yahoo Finance options API（无需 Key，但常限流）"""
+        proxies = {"http": PROXY, "https": PROXY} if PROXY else None
         headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
             "Accept": "application/json"
         }
         try:
-            res = requests.get(f"{YAHOO_URL}/{self.symbol}", headers=headers, timeout=15)
+            res = requests.get(
+                f"{YAHOO_URL}/{self.symbol}",
+                headers=headers, proxies=proxies, timeout=15
+            )
             if res.status_code != 200:
+                print(f"  [Yahoo] HTTP {res.status_code}")
                 return None
             data = res.json()
             result = data.get("optionChain", {}).get("result", [])
             if not result:
+                print(f"  [Yahoo] 无 result 数据")
                 return None
             opts = result[0].get("options", [{}])[0]
             calls = opts.get("calls", [])
@@ -111,7 +143,8 @@ class GEXAnalysisSkill:
             if not rows:
                 return None
             return pd.DataFrame(rows)
-        except Exception:
+        except Exception as e:
+            print(f"  [Yahoo] 异常: {e}")
             return None
 
     def _generate_demo_data(self):
@@ -124,21 +157,27 @@ class GEXAnalysisSkill:
             dist = abs(k - ref) / ref
             gamma_call = random.uniform(0.01, 0.3) * (1 - dist * 2)
             gamma_put = random.uniform(0.01, 0.3) * (1 - dist * 2)
-            rows.append({"行权价": round(k, 2), "期权类型": "C",
-                         "Gamma值": max(gamma_call, 0.001), "持仓量": random.randint(100, 5000)})
-            rows.append({"行权价": round(k, 2), "期权类型": "P",
-                         "Gamma值": max(gamma_put, 0.001), "持仓量": random.randint(100, 5000)})
+            rows.append({
+                "行权价": round(k, 2), "期权类型": "C",
+                "Gamma值": max(gamma_call, 0.001),
+                "持仓量": random.randint(100, 5000)
+            })
+            rows.append({
+                "行权价": round(k, 2), "期权类型": "P",
+                "Gamma值": max(gamma_put, 0.001),
+                "持仓量": random.randint(100, 5000)
+            })
         return pd.DataFrame(rows)
 
     def get_option_chain(self):
         """三层兜底获取期权链"""
         df = self._fetch_marketdata()
         if df is not None and not df.empty:
-            print(f"  [marketdata.app] {self.symbol}: 获取 {len(df)} 条记录")
+            print(f"  [marketdata.app] {self.symbol}: {len(df)} 条记录")
             return df
         df = self._fetch_yahoo()
         if df is not None and not df.empty:
-            print(f"  [Yahoo Finance] {self.symbol}: 获取 {len(df)} 条记录")
+            print(f"  [Yahoo Finance] {self.symbol}: {len(df)} 条记录")
             return df
         print(f"  [合成演示数据] {self.symbol}: API 不可用，使用 [DEMO DATA]")
         return self._generate_demo_data()
@@ -158,7 +197,8 @@ class GEXAnalysisSkill:
         gex_result["看跌期权GEX(PutGEX)"] = put_df
         gex_result = gex_result.fillna(0)
         gex_result["净GEX(NetGEX)"] = (
-            gex_result["看涨期权GEX(CallGEX)"] + gex_result["看跌期权GEX(PutGEX)"]
+            gex_result["看涨期权GEX(CallGEX)"] +
+            gex_result["看跌期权GEX(PutGEX)"]
         ).round(2)
 
         gex_result["GEX符号"] = np.sign(gex_result["净GEX(NetGEX)"])
@@ -175,8 +215,15 @@ class GEXAnalysisSkill:
         """生成单标的 HTML 报告"""
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         flip_str = html.escape(str(flip_strikes))
-        demo_badge = '<span style="background:#d4af37;color:#002b5c;padding:2px 8px;border-radius:4px;font-size:12px;margin-left:8px;">⚠️ [DEMO DATA]</span>' if self.is_demo else ""
-        demo_notice = '<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:12px;margin-bottom:16px;font-size:14px;color:#856404;">⚠️ 当前为演示数据，真实 API 暂时不可用</div>' if self.is_demo else ""
+        demo_badge = (
+            f'<span style="background:#d4af37;color:#002b5c;padding:2px 8px;'
+            f'border-radius:4px;font-size:12px;margin-left:8px;">⚠️ [DEMO DATA]</span>'
+        ) if self.is_demo else ""
+        demo_notice = (
+            '<div style="background:#fff3cd;border:1px solid #ffc107;'
+            'border-radius:6px;padding:12px;margin-bottom:16px;font-size:14px;color:#856404;">'
+            '⚠️ 当前为演示数据（API 不可用或未配置）</div>'
+        ) if self.is_demo else ""
 
         html_content = f"""<!DOCTYPE html>
 <html lang="zh">
@@ -320,7 +367,7 @@ def run_all_symbols_task():
 
 
 if __name__ == "__main__":
-    print(f"========== {BRAND_NAME} 期权 GEX 分析引擎 v1.2 启动 ==========")
+    print(f"========== {BRAND_NAME} 期权 GEX 分析引擎 v1.3 启动 ==========")
     run_all_symbols_task()
     if schedule is not None:
         schedule.every(RUN_INTERVAL_MIN).minutes.do(run_all_symbols_task)
